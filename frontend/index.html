@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CareerScraper</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- PDF.js for client-side PDF text extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    // NOTE: The FastAPI backend at localhost:8765 must have CORS enabled.
+    // In app/main.py, add:
+    //   from fastapi.middleware.cors import CORSMiddleware
+    //   app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  </script>
+
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; }
+    body {
+      font-family: 'Manrope', sans-serif;
+      background: #ffffff;
+      color: #1c1d06;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── Design tokens ─────────────────────────────────────────── */
+    :root {
+      --cream:       #fdfbd4;
+      --cream-dim:   #eceac4;
+      --cream-low:   #f7f6cf;
+      --cocoa:       #38240d;
+      --cocoa-dark:  #211000;
+      --orange:      #c05800;
+      --orange-sec:  #9b4600;
+      --roasted:     #713600;
+      --outline:     #80756b;
+      --text:        #1c1d06;
+      --text-muted:  #4e453d;
+      --white:       #ffffff;
+      --radius-sm:   0.25rem;
+      --radius:      0.5rem;
+      --radius-md:   0.75rem;
+      --radius-lg:   1rem;
+      --radius-xl:   1.5rem;
+      --radius-full: 9999px;
+      --max-w:       1280px;
+    }
+
+    /* ─── Navbar ────────────────────────────────────────────────── */
+    .navbar {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--white);
+      border-bottom: 1px solid rgba(128,117,107,0.15);
+      padding: 0 64px;
+      height: 64px;
+      display: flex; align-items: center; justify-content: space-between;
+      max-width: 100%;
+    }
+    .navbar__logo {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-weight: 700; font-size: 18px;
+      color: var(--cocoa-dark); text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+    .navbar__actions { display: flex; align-items: center; gap: 12px; }
+    .navbar__link {
+      font-family: 'Manrope', sans-serif;
+      font-size: 14px; font-weight: 500;
+      color: var(--text-muted); text-decoration: none;
+      padding: 8px 12px; border-radius: var(--radius);
+      transition: color 0.15s;
+    }
+    .navbar__link:hover { color: var(--cocoa); }
+    .navbar__btn {
+      background: var(--cocoa-dark); color: var(--white);
+      font-family: 'Manrope', sans-serif;
+      font-size: 14px; font-weight: 600;
+      padding: 8px 20px; border-radius: var(--radius);
+      border: none; cursor: pointer; text-decoration: none;
+      transition: background 0.15s;
+    }
+    .navbar__btn:hover { background: var(--cocoa); }
+
+    /* ─── Hero ──────────────────────────────────────────────────── */
+    .hero {
+      background: var(--cream);
+      padding: 80px 64px 96px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+      max-width: 100%;
+      overflow: hidden;
+    }
+    .hero__left { max-width: 560px; }
+    .hero__eyebrow {
+      display: inline-block;
+      font-family: 'Manrope', sans-serif;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--orange);
+      background: rgba(192,88,0,0.1);
+      padding: 4px 12px; border-radius: var(--radius-full);
+      margin-bottom: 20px;
+    }
+    .hero__title {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 48px; font-weight: 700;
+      line-height: 56px; letter-spacing: -0.02em;
+      color: var(--cocoa-dark);
+      margin-bottom: 16px;
+    }
+    .hero__title span { color: var(--orange); }
+    .hero__subtitle {
+      font-family: 'Manrope', sans-serif;
+      font-size: 17px; line-height: 28px;
+      color: var(--text-muted);
+      margin-bottom: 40px;
+    }
+
+    /* ─── Form ──────────────────────────────────────────────────── */
+    .form-card {
+      background: var(--white);
+      border-radius: var(--radius-lg);
+      padding: 32px;
+      box-shadow: 0 4px 24px rgba(56,36,13,0.10);
+    }
+    .form-field { margin-bottom: 20px; }
+    .form-label {
+      display: block;
+      font-family: 'Manrope', sans-serif;
+      font-size: 12px; font-weight: 600;
+      letter-spacing: 0.05em; text-transform: uppercase;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .form-input {
+      width: 100%;
+      font-family: 'Manrope', sans-serif;
+      font-size: 15px;
+      color: var(--text);
+      background: var(--white);
+      border: 1px solid rgba(113,54,0,0.30);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-input:focus {
+      border-color: var(--orange);
+      border-width: 2px;
+      box-shadow: 0 0 0 3px rgba(192,88,0,0.10);
+    }
+    .form-input::placeholder { color: var(--outline); }
+
+    /* Resume tabs */
+    .resume-tabs { display: flex; gap: 0; margin-bottom: 12px; border-radius: var(--radius); overflow: hidden; border: 1px solid rgba(113,54,0,0.20); }
+    .resume-tab {
+      flex: 1; padding: 9px 0;
+      font-family: 'Manrope', sans-serif;
+      font-size: 13px; font-weight: 600;
+      text-align: center; cursor: pointer;
+      background: var(--cream-low);
+      color: var(--text-muted);
+      border: none; outline: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .resume-tab.active {
+      background: var(--cocoa-dark); color: var(--white);
+    }
+    .resume-panel { display: none; }
+    .resume-panel.active { display: block; }
+
+    textarea.form-input {
+      resize: vertical; min-height: 120px;
+      font-size: 14px; line-height: 1.5;
+    }
+
+    .file-drop {
+      border: 2px dashed rgba(113,54,0,0.30);
+      border-radius: var(--radius);
+      padding: 28px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      background: var(--cream-low);
+    }
+    .file-drop:hover { border-color: var(--orange); background: rgba(192,88,0,0.04); }
+    .file-drop.dragover { border-color: var(--orange); background: rgba(192,88,0,0.07); }
+    .file-drop input[type="file"] { display: none; }
+    .file-drop__icon { font-size: 28px; margin-bottom: 8px; }
+    .file-drop__text { font-size: 14px; color: var(--text-muted); line-height: 1.5; }
+    .file-drop__text strong { color: var(--orange); }
+    .file-status { margin-top: 8px; font-size: 13px; color: var(--roasted); font-weight: 500; }
+
+    .submit-btn {
+      width: 100%; padding: 14px;
+      background: var(--orange); color: var(--white);
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 16px; font-weight: 600;
+      border: none; border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      letter-spacing: -0.01em;
+    }
+    .submit-btn:hover { background: var(--orange-sec); }
+    .submit-btn:active { transform: scale(0.99); }
+    .submit-btn:disabled { background: var(--outline); cursor: not-allowed; transform: none; }
+
+    /* ─── Hero right panel ──────────────────────────────────────── */
+    .hero__right {
+      background: var(--cocoa-dark);
+      border-radius: var(--radius-xl);
+      padding: 48px 40px;
+      color: var(--white);
+      min-height: 340px;
+      display: flex; flex-direction: column; justify-content: center;
+      position: relative; overflow: hidden;
+    }
+    .hero__right::before {
+      content: '';
+      position: absolute; top: -60px; right: -60px;
+      width: 200px; height: 200px;
+      border-radius: 50%;
+      background: rgba(192,88,0,0.15);
+    }
+    .hero__right-label {
+      font-family: 'Manrope', sans-serif;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: rgba(253,251,212,0.6);
+      margin-bottom: 16px;
+    }
+    .hero__right-headline {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 28px; font-weight: 700;
+      line-height: 36px; letter-spacing: -0.02em;
+      color: var(--cream);
+      margin-bottom: 12px;
+    }
+    .hero__right-sub {
+      font-family: 'Manrope', sans-serif;
+      font-size: 15px; line-height: 24px;
+      color: rgba(253,251,212,0.7);
+    }
+    .hero__right-badge {
+      margin-top: 32px;
+      display: inline-flex; align-items: center; gap: 10px;
+      background: rgba(192,88,0,0.2);
+      border: 1px solid rgba(192,88,0,0.4);
+      border-radius: var(--radius-full);
+      padding: 10px 18px;
+      font-family: 'Manrope', sans-serif;
+      font-size: 13px; font-weight: 600;
+      color: var(--cream);
+    }
+    .hero__right-badge-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #4ade80; flex-shrink: 0;
+      box-shadow: 0 0 6px #4ade80;
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+    }
+
+    /* ─── Loading overlay ───────────────────────────────────────── */
+    .loading-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(253,251,212,0.85);
+      backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+      flex-direction: column; gap: 20px;
+    }
+    .loading-overlay.active { display: flex; }
+    .loading-spinner {
+      width: 48px; height: 48px;
+      border: 4px solid rgba(56,36,13,0.15);
+      border-top-color: var(--orange);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-message {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 20px; font-weight: 600;
+      color: var(--cocoa-dark);
+      text-align: center;
+    }
+    .loading-step {
+      font-family: 'Manrope', sans-serif;
+      font-size: 14px; color: var(--text-muted);
+    }
+
+    /* ─── Error banner ──────────────────────────────────────────── */
+    .error-banner {
+      display: none;
+      background: #ffdad6; border: 1px solid #ba1a1a;
+      border-radius: var(--radius);
+      padding: 14px 18px; margin: 0 64px 24px;
+      font-family: 'Manrope', sans-serif;
+      font-size: 14px; color: #93000a;
+      align-items: center; gap: 10px;
+    }
+    .error-banner.active { display: flex; }
+
+    /* ─── Results section ───────────────────────────────────────── */
+    .results-section {
+      display: none;
+      padding: 48px 64px 80px;
+      background: var(--white);
+    }
+    .results-section.active { display: block; }
+
+    .results-header {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 16px;
+      margin-bottom: 32px;
+    }
+    .results-title {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 28px; font-weight: 700;
+      letter-spacing: -0.02em; color: var(--cocoa-dark);
+    }
+    .results-meta {
+      font-family: 'Manrope', sans-serif;
+      font-size: 14px; color: var(--text-muted);
+      margin-top: 4px;
+    }
+    .results-meta strong { color: var(--cocoa); }
+
+    .results-controls {
+      background: var(--cream-low);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+    .filter-group { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 240px; }
+    .filter-label {
+      font-family: 'Manrope', sans-serif;
+      font-size: 12px; font-weight: 600;
+      letter-spacing: 0.05em; text-transform: uppercase;
+      color: var(--text-muted); white-space: nowrap;
+    }
+    .filter-value {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 15px; font-weight: 700;
+      color: var(--orange); min-width: 36px;
+    }
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      flex: 1; height: 4px;
+      background: var(--cream-dim); border-radius: var(--radius-full);
+      outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--orange);
+      border: 2px solid var(--white);
+      box-shadow: 0 1px 4px rgba(56,36,13,0.25);
+      cursor: pointer;
+    }
+
+    .export-btn {
+      background: var(--white);
+      border: 1.5px solid rgba(113,54,0,0.30);
+      border-radius: var(--radius);
+      padding: 9px 18px;
+      font-family: 'Manrope', sans-serif;
+      font-size: 13px; font-weight: 600;
+      color: var(--cocoa); cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      transition: border-color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .export-btn:hover { border-color: var(--orange); background: rgba(192,88,0,0.04); }
+
+    /* ─── Job cards ─────────────────────────────────────────────── */
+    .jobs-list { display: flex; flex-direction: column; gap: 16px; }
+
+    .job-card {
+      background: var(--white);
+      border: 1px solid rgba(128,117,107,0.15);
+      border-radius: var(--radius-lg);
+      padding: 24px 28px;
+      box-shadow: 0 2px 12px rgba(56,36,13,0.06);
+      transition: box-shadow 0.2s, border-color 0.2s;
+    }
+    .job-card:hover {
+      box-shadow: 0 4px 20px rgba(56,36,13,0.10);
+      border-color: rgba(192,88,0,0.25);
+    }
+
+    .job-card__top {
+      display: flex; align-items: flex-start;
+      justify-content: space-between; gap: 16px;
+      margin-bottom: 12px;
+    }
+    .job-card__title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .job-card__title {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 18px; font-weight: 700;
+      color: var(--cocoa-dark); letter-spacing: -0.01em;
+    }
+
+    /* Level badges */
+    .level-badge {
+      font-family: 'Manrope', sans-serif;
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 3px 10px; border-radius: var(--radius-full);
+      white-space: nowrap;
+    }
+    .level-badge--new-grad  { background: #dcfce7; color: #166534; }
+    .level-badge--junior    { background: #dbeafe; color: #1e40af; }
+    .level-badge--mid       { background: #fef9c3; color: #854d0e; }
+    .level-badge--senior    { background: #ffedd5; color: #9a3412; }
+    .level-badge--staff     { background: #f3e8ff; color: #6b21a8; }
+    .level-badge--principal { background: #fce7f3; color: #9d174d; }
+    .level-badge--director  { background: rgba(56,36,13,0.10); color: var(--cocoa); }
+    .level-badge--vp        { background: rgba(56,36,13,0.15); color: var(--cocoa-dark); }
+    .level-badge--unknown   { display: none; }
+
+    .job-card__meta {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .job-card__meta-item {
+      display: flex; align-items: center; gap: 5px;
+      font-family: 'Manrope', sans-serif;
+      font-size: 13px; color: var(--text-muted);
+    }
+    .job-card__meta-item svg { opacity: 0.6; }
+    .job-card__salary {
+      font-weight: 600; color: var(--roasted);
+    }
+
+    /* Score bar */
+    .score-bar-wrap {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 14px;
+    }
+    .score-bar-label {
+      font-family: 'Manrope', sans-serif;
+      font-size: 12px; font-weight: 600;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--text-muted); white-space: nowrap;
+    }
+    .score-bar-track {
+      flex: 1; height: 8px;
+      background: var(--cream-dim); border-radius: var(--radius-full); overflow: hidden;
+    }
+    .score-bar-fill {
+      height: 100%; border-radius: var(--radius-full);
+      transition: width 0.6s cubic-bezier(0.4,0,0.2,1);
+    }
+    .score-bar-fill--green  { background: #22c55e; }
+    .score-bar-fill--yellow { background: #eab308; }
+    .score-bar-fill--red    { background: #ef4444; }
+    .score-pct {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 15px; font-weight: 700;
+      min-width: 40px; text-align: right;
+    }
+    .score-pct--green  { color: #16a34a; }
+    .score-pct--yellow { color: #ca8a04; }
+    .score-pct--red    { color: #dc2626; }
+
+    /* Keywords */
+    .keywords-row {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin-bottom: 12px;
+    }
+    .kw-tag {
+      font-family: 'Manrope', sans-serif;
+      font-size: 11px; font-weight: 600;
+      padding: 3px 9px; border-radius: var(--radius-full);
+      text-transform: lowercase;
+    }
+    .kw-tag--match   { background: #dcfce7; color: #15803d; }
+    .kw-tag--missing { background: #fee2e2; color: #b91c1c; }
+
+    /* Explanation */
+    .job-card__explanation {
+      font-family: 'Manrope', sans-serif;
+      font-size: 13px; font-style: italic;
+      color: var(--text-muted); line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .job-card__footer {
+      display: flex; align-items: center;
+      justify-content: space-between; gap: 12px;
+      padding-top: 14px;
+      border-top: 1px solid var(--cream-dim);
+    }
+    .job-card__ats-badge {
+      font-family: 'Manrope', sans-serif;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--outline); background: var(--cream-low);
+      padding: 3px 10px; border-radius: var(--radius-full);
+    }
+    .view-job-btn {
+      background: var(--cocoa-dark); color: var(--white);
+      font-family: 'Manrope', sans-serif;
+      font-size: 13px; font-weight: 600;
+      padding: 9px 20px; border-radius: var(--radius);
+      border: none; cursor: pointer; text-decoration: none;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: background 0.15s;
+    }
+    .view-job-btn:hover { background: var(--cocoa); }
+
+    /* ─── Empty / no-results state ──────────────────────────────── */
+    .empty-state {
+      text-align: center; padding: 60px 20px;
+    }
+    .empty-state__icon { font-size: 48px; margin-bottom: 16px; }
+    .empty-state__title {
+      font-family: 'Hanken Grotesk', sans-serif;
+      font-size: 22px; font-weight: 700; color: var(--cocoa-dark);
+      margin-bottom: 8px;
+    }
+    .empty-state__sub {
+      font-family: 'Manrope', sans-serif;
+      font-size: 15px; color: var(--text-muted);
+    }
+
+    /* ─── Responsive ────────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .navbar { padding: 0 20px; }
+      .hero { grid-template-columns: 1fr; padding: 48px 20px 56px; gap: 32px; }
+      .hero__right { display: none; }
+      .error-banner { margin: 0 20px 20px; }
+      .results-section { padding: 32px 20px 60px; }
+      .results-controls { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ─── Navbar ──────────────────────────────────────────────────── -->
+  <nav class="navbar">
+    <a href="#" class="navbar__logo">CareerScraper</a>
+    <div class="navbar__actions">
+      <a href="http://localhost:8765/docs" target="_blank" class="navbar__link">Documentation</a>
+      <a href="#" class="navbar__btn">Sign In</a>
+    </div>
+  </nav>
+
+  <!-- ─── Loading overlay ─────────────────────────────────────────── -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-message" id="loadingMessage">Fetching career page...</div>
+    <div class="loading-step" id="loadingStep">Step 1 of 3</div>
+  </div>
+
+  <!-- ─── Hero ────────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="hero__left">
+      <span class="hero__eyebrow">AI-Powered Job Matching</span>
+      <h1 class="hero__title">Scrape the Future of<br><span>Your Career.</span></h1>
+      <p class="hero__subtitle">Paste any company careers URL and your resume. We scrape every open role and rank them by how well they match you — in seconds.</p>
+
+      <!-- ─── Form card ──────────────────────────────────────────── -->
+      <div class="form-card">
+        <form id="scrapeForm" novalidate>
+
+          <!-- URL input -->
+          <div class="form-field">
+            <label class="form-label" for="careerUrl">Company Career Page URL</label>
+            <input
+              type="url" id="careerUrl" name="careerUrl"
+              class="form-input"
+              placeholder="https://boards.greenhouse.io/acme  or  https://acme.com/careers"
+              required
+            />
+          </div>
+
+          <!-- Resume input with tabs -->
+          <div class="form-field">
+            <label class="form-label">Your Resume</label>
+            <div class="resume-tabs" role="tablist">
+              <button type="button" class="resume-tab active" data-tab="paste" role="tab">Paste Text</button>
+              <button type="button" class="resume-tab" data-tab="upload" role="tab">Upload PDF</button>
+            </div>
+
+            <!-- Paste text panel -->
+            <div class="resume-panel active" id="panel-paste">
+              <textarea
+                id="resumeText" name="resumeText"
+                class="form-input"
+                placeholder="Paste your resume text here…"
+                rows="6"
+              ></textarea>
+            </div>
+
+            <!-- Upload PDF panel -->
+            <div class="resume-panel" id="panel-upload">
+              <div class="file-drop" id="fileDrop">
+                <input type="file" id="pdfInput" accept="application/pdf" />
+                <div class="file-drop__icon">📄</div>
+                <div class="file-drop__text">
+                  <strong>Click to upload</strong> or drag & drop your PDF resume<br>
+                  <span style="font-size:12px;opacity:0.7;">Text is extracted client-side — never uploaded to any server</span>
+                </div>
+              </div>
+              <div class="file-status" id="fileStatus"></div>
+            </div>
+          </div>
+
+          <button type="submit" class="submit-btn" id="submitBtn">Find Matching Jobs →</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ─── Right panel ──────────────────────────────────────────── -->
+    <div class="hero__right">
+      <div class="hero__right-label">How it works</div>
+      <div class="hero__right-headline">Five ATS platforms.<br>One search bar.</div>
+      <div class="hero__right-sub">
+        Supports Greenhouse, Lever, Ashby, Workday, Avature, Oracle HCM, and any generic careers page — with automatic detection and iframe unwrapping.
+      </div>
+      <div class="hero__right-badge">
+        <div class="hero__right-badge-dot"></div>
+        Scraper online · localhost:8765
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── Error banner ─────────────────────────────────────────────── -->
+  <div class="error-banner" id="errorBanner" role="alert">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    <span id="errorText">Something went wrong.</span>
+  </div>
+
+  <!-- ─── Results section ──────────────────────────────────────────── -->
+  <section class="results-section" id="resultsSection">
+    <div class="results-header">
+      <div>
+        <div class="results-title">Matched Jobs</div>
+        <div class="results-meta" id="resultsMeta">— jobs found</div>
+      </div>
+    </div>
+
+    <div class="results-controls">
+      <div class="filter-group">
+        <span class="filter-label">Min Match Score</span>
+        <input type="range" id="scoreFilter" min="0" max="100" value="0" />
+        <span class="filter-value" id="scoreFilterValue">0%</span>
+      </div>
+      <button class="export-btn" id="exportBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+    </div>
+
+    <div class="jobs-list" id="jobsList"></div>
+  </section>
+
+  <script>
+  (() => {
+    'use strict';
+
+    // ── Config ──────────────────────────────────────────────────────
+    const API_BASE = 'http://localhost:8765';
+    // REMINDER: Make sure FastAPI has CORS enabled:
+    // from fastapi.middleware.cors import CORSMiddleware
+    // app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+    const LOADING_STEPS = [
+      { msg: 'Fetching career page…',       step: 'Step 1 of 3' },
+      { msg: 'Extracting job listings…',    step: 'Step 2 of 3' },
+      { msg: 'Matching to your resume…',    step: 'Step 3 of 3' },
+    ];
+
+    // ── State ────────────────────────────────────────────────────────
+    let allResults = [];
+    let currentAts = '';
+
+    // ── DOM refs ─────────────────────────────────────────────────────
+    const form          = document.getElementById('scrapeForm');
+    const urlInput      = document.getElementById('careerUrl');
+    const resumeText    = document.getElementById('resumeText');
+    const submitBtn     = document.getElementById('submitBtn');
+    const loadingOverlay= document.getElementById('loadingOverlay');
+    const loadingMsg    = document.getElementById('loadingMessage');
+    const loadingStep   = document.getElementById('loadingStep');
+    const errorBanner   = document.getElementById('errorBanner');
+    const errorText     = document.getElementById('errorText');
+    const resultsSection= document.getElementById('resultsSection');
+    const resultsMeta   = document.getElementById('resultsMeta');
+    const scoreFilter   = document.getElementById('scoreFilter');
+    const scoreFilterVal= document.getElementById('scoreFilterValue');
+    const exportBtn     = document.getElementById('exportBtn');
+    const jobsList      = document.getElementById('jobsList');
+    const fileDrop      = document.getElementById('fileDrop');
+    const pdfInput      = document.getElementById('pdfInput');
+    const fileStatus    = document.getElementById('fileStatus');
+
+    // ── Resume tabs ─────────────────────────────────────────────────
+    document.querySelectorAll('.resume-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.resume-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.resume-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ── PDF file drop / click ────────────────────────────────────────
+    fileDrop.addEventListener('click', () => pdfInput.click());
+    fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.classList.add('dragover'); });
+    fileDrop.addEventListener('dragleave', () => fileDrop.classList.remove('dragover'));
+    fileDrop.addEventListener('drop', e => {
+      e.preventDefault(); fileDrop.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) handlePdfFile(file);
+    });
+    pdfInput.addEventListener('change', () => {
+      if (pdfInput.files[0]) handlePdfFile(pdfInput.files[0]);
+    });
+
+    async function handlePdfFile(file) {
+      if (file.type !== 'application/pdf') {
+        fileStatus.textContent = '⚠ Please upload a PDF file.';
+        return;
+      }
+      fileStatus.textContent = '⏳ Extracting text from PDF…';
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let text = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          text += content.items.map(item => item.str).join(' ') + '\n';
+        }
+        resumeText.value = text.trim();
+        fileStatus.textContent = `✓ Extracted ${text.split(/\s+/).length} words from "${file.name}"`;
+        // Switch to paste tab to show the extracted text
+        document.querySelectorAll('.resume-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.resume-panel').forEach(p => p.classList.remove('active'));
+        document.querySelector('[data-tab="paste"]').classList.add('active');
+        document.getElementById('panel-paste').classList.add('active');
+      } catch (err) {
+        fileStatus.textContent = '✗ Failed to read PDF: ' + err.message;
+      }
+    }
+
+    // ── Loading steps ────────────────────────────────────────────────
+    let stepInterval = null;
+    function startLoading() {
+      loadingOverlay.classList.add('active');
+      submitBtn.disabled = true;
+      let i = 0;
+      loadingMsg.textContent = LOADING_STEPS[0].msg;
+      loadingStep.textContent = LOADING_STEPS[0].step;
+      stepInterval = setInterval(() => {
+        i = (i + 1) % LOADING_STEPS.length;
+        loadingMsg.textContent = LOADING_STEPS[i].msg;
+        loadingStep.textContent = LOADING_STEPS[i].step;
+      }, 4000);
+    }
+    function stopLoading() {
+      clearInterval(stepInterval);
+      loadingOverlay.classList.remove('active');
+      submitBtn.disabled = false;
+    }
+
+    // ── Error handling ───────────────────────────────────────────────
+    function showError(msg) {
+      errorText.textContent = msg;
+      errorBanner.classList.add('active');
+      errorBanner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    function hideError() { errorBanner.classList.remove('active'); }
+
+    // ── Level detection ──────────────────────────────────────────────
+    function detectLevel(title, desc) {
+      const t = (title + ' ' + (desc || '')).toLowerCase();
+      if (/new\s*grad|entry.?level|university\s*hire|campus/.test(t)) return 'new-grad';
+      if (/\bjunior\b|jr\.?\s/.test(t))           return 'junior';
+      if (/\bvp\b|vice\s*president/.test(t))       return 'vp';
+      if (/\bdirector\b|managing\s*director/.test(t)) return 'director';
+      if (/\bprincipal\b/.test(t))                 return 'principal';
+      if (/\bstaff\b/.test(t))                     return 'staff';
+      if (/\bsenior\b|\bsr\.?\s|\blead\b/.test(t)) return 'senior';
+      if (/\bmid.?level\b/.test(t))                return 'mid';
+      return 'unknown';
+    }
+
+    const LEVEL_LABELS = {
+      'new-grad': 'New Grad', junior: 'Junior', mid: 'Mid-Level',
+      senior: 'Senior', staff: 'Staff', principal: 'Principal',
+      director: 'Director', vp: 'VP', unknown: ''
+    };
+
+    // ── Salary detection ─────────────────────────────────────────────
+    function extractSalary(text) {
+      if (!text) return null;
+      const m = text.match(/\$[\d,]+[Kk]?\s*[–\-–—to]+\s*\$[\d,]+[Kk]?|\$[\d,]+[Kk]?\s*(?:\/\s*(?:yr|year|hour|hr))?/);
+      return m ? m[0] : null;
+    }
+
+    // ── Score color ──────────────────────────────────────────────────
+    function scoreColor(pct) {
+      if (pct >= 70) return 'green';
+      if (pct >= 40) return 'yellow';
+      return 'red';
+    }
+
+    // ── Render one job card ───────────────────────────────────────────
+    function renderCard(result, ats) {
+      const { job, score_pct, matched_keywords, missing_keywords, explanation } = result;
+      const level     = detectLevel(job.title, job.description);
+      const salary    = extractSalary(job.description);
+      const color     = scoreColor(score_pct);
+
+      const card = document.createElement('div');
+      card.className = 'job-card';
+      card.dataset.score = score_pct;
+
+      // Location icon SVG
+      const locIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+      const salaryIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`;
+
+      card.innerHTML = `
+        <div class="job-card__top">
+          <div>
+            <div class="job-card__title-row">
+              <span class="job-card__title">${escHtml(job.title)}</span>
+              <span class="level-badge level-badge--${level}">${escHtml(LEVEL_LABELS[level] || '')}</span>
+            </div>
+          </div>
+        </div>
+        <div class="job-card__meta">
+          ${job.location ? `<span class="job-card__meta-item">${locIcon} ${escHtml(job.location)}</span>` : ''}
+          ${salary       ? `<span class="job-card__meta-item job-card__salary">${salaryIcon} ${escHtml(salary)}</span>` : ''}
+        </div>
+        <div class="score-bar-wrap">
+          <span class="score-bar-label">Match</span>
+          <div class="score-bar-track">
+            <div class="score-bar-fill score-bar-fill--${color}" style="width:${score_pct}%"></div>
+          </div>
+          <span class="score-pct score-pct--${color}">${score_pct}%</span>
+        </div>
+        ${matched_keywords.length || missing_keywords.length ? `
+        <div class="keywords-row">
+          ${matched_keywords.slice(0,8).map(k => `<span class="kw-tag kw-tag--match">✓ ${escHtml(k)}</span>`).join('')}
+          ${missing_keywords.slice(0,5).map(k => `<span class="kw-tag kw-tag--missing">✗ ${escHtml(k)}</span>`).join('')}
+        </div>` : ''}
+        ${explanation ? `<div class="job-card__explanation">${escHtml(explanation)}</div>` : ''}
+        <div class="job-card__footer">
+          <span class="job-card__ats-badge">${escHtml(ats)}</span>
+          <a href="${escHtml(job.url)}" target="_blank" rel="noopener" class="view-job-btn">
+            View Job
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+          </a>
+        </div>
+      `;
+      return card;
+    }
+
+    function escHtml(str) {
+      return String(str ?? '')
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ── Render results list ───────────────────────────────────────────
+    function renderResults(minScore) {
+      const filtered = allResults.filter(r => r.score_pct >= minScore);
+      jobsList.innerHTML = '';
+
+      if (filtered.length === 0) {
+        jobsList.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state__icon">🔍</div>
+            <div class="empty-state__title">No jobs match this filter</div>
+            <div class="empty-state__sub">Try lowering the minimum score threshold.</div>
+          </div>`;
+      } else {
+        filtered.forEach(r => jobsList.appendChild(renderCard(r, currentAts)));
+      }
+
+      resultsMeta.innerHTML = `
+        <strong>${allResults.length}</strong> jobs found &nbsp;·&nbsp;
+        showing <strong>${filtered.length}</strong> above ${minScore}% match`;
+    }
+
+    // ── Score filter ──────────────────────────────────────────────────
+    scoreFilter.addEventListener('input', () => {
+      const v = parseInt(scoreFilter.value);
+      scoreFilterVal.textContent = v + '%';
+      renderResults(v);
+    });
+
+    // ── Export CSV ────────────────────────────────────────────────────
+    exportBtn.addEventListener('click', () => {
+      if (!allResults.length) return;
+      const minScore = parseInt(scoreFilter.value);
+      const rows = allResults
+        .filter(r => r.score_pct >= minScore)
+        .map(r => [
+          `"${(r.job.title || '').replace(/"/g, '""')}"`,
+          r.score_pct,
+          `"${(r.job.location || '').replace(/"/g, '""')}"`,
+          `"${(r.job.url || '').replace(/"/g, '""')}"`,
+          `"${(r.matched_keywords || []).join(', ')}"`,
+          `"${(r.missing_keywords || []).join(', ')}"`,
+          `"${(r.explanation || '').replace(/"/g, '""')}"`,
+        ].join(','));
+
+      const csv = ['Title,Score (%),Location,URL,Matched Keywords,Missing Keywords,Explanation', ...rows].join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `careerscraper-results-${Date.now()}.csv`;
+      a.click();
+    });
+
+    // ── Form submit ───────────────────────────────────────────────────
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideError();
+
+      const url = urlInput.value.trim();
+      const resume = resumeText.value.trim();
+
+      if (!url) { showError('Please enter a company career page URL.'); return; }
+      if (!resume) { showError('Please paste your resume text or upload a PDF.'); return; }
+
+      startLoading();
+      resultsSection.classList.remove('active');
+      allResults = [];
+
+      try {
+        const res = await fetch(`${API_BASE}/match`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, resume_text: resume }),
+        });
+
+        if (!res.ok) {
+          let detail = `Server error ${res.status}`;
+          try { const j = await res.json(); detail = j.detail || detail; } catch {}
+          throw new Error(detail);
+        }
+
+        const data = await res.json();
+
+        if (!data.results || data.results.length === 0) {
+          throw new Error('No jobs were found for this URL. The page may be unsupported or empty.');
+        }
+
+        allResults  = data.results;
+        currentAts  = data.ats || '';
+        scoreFilter.value = '0';
+        scoreFilterVal.textContent = '0%';
+
+        stopLoading();
+        resultsSection.classList.add('active');
+        renderResults(0);
+        resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      } catch (err) {
+        stopLoading();
+        showError(err.message || 'Failed to connect to the scraper. Is it running on localhost:8765?');
+      }
+    });
+  })();
+  </script>
+</body>
+</html>
