@@ -13,7 +13,7 @@
   <!-- PDF.js for client-side PDF text extraction -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
-    // NOTE: The FastAPI backend at localhost:8765 must have CORS enabled.
+    // NOTE: The FastAPI backend at localhost:8000 must have CORS enabled.
     // In app/main.py, add:
     //   from fastapi.middleware.cors import CORSMiddleware
     //   app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -557,7 +557,7 @@
   <nav class="navbar">
     <a href="#" class="navbar__logo">CareerScraper</a>
     <div class="navbar__actions">
-      <a href="http://localhost:8765/docs" target="_blank" class="navbar__link">Documentation</a>
+      <a href="http://localhost:8000/docs" target="_blank" class="navbar__link">Documentation</a>
       <a href="#" class="navbar__btn">Sign In</a>
     </div>
   </nav>
@@ -637,7 +637,7 @@
       </div>
       <div class="hero__right-badge">
         <div class="hero__right-badge-dot"></div>
-        Scraper online · localhost:8765
+        Scraper online · localhost:8000
       </div>
     </div>
   </section>
@@ -677,7 +677,7 @@
     'use strict';
 
     // ── Config ──────────────────────────────────────────────────────
-    const API_BASE = 'http://localhost:8765';
+    const API_BASE = 'http://localhost:8000';
     // REMINDER: Make sure FastAPI has CORS enabled:
     // from fastapi.middleware.cors import CORSMiddleware
     // app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -980,7 +980,7 @@
 
       } catch (err) {
         stopLoading();
-        showError(err.message || 'Failed to connect to the scraper. Is it running on localhost:8765?');
+        showError(err.message || 'Failed to connect to the scraper. Is it running on localhost:8000?');
       }
     });
   })();
