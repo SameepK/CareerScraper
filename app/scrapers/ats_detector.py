@@ -10,6 +10,7 @@ class ATS(str, Enum):
     WORKDAY = "workday"
     AVATURE = "avature"
     ORACLE_HCM = "oracle_hcm"
+    IBM = "ibm"
     GENERIC = "generic"
 
 
@@ -20,6 +21,7 @@ _PATTERNS: list[tuple[re.Pattern, ATS]] = [
     (re.compile(r"myworkdayjobs\.com|workday\.com", re.I), ATS.WORKDAY),
     (re.compile(r"avature\.net", re.I), ATS.AVATURE),
     (re.compile(r"fa\.oraclecloud\.com.*hcmUI|taleo\.net|oraclecorp\.com.*hcm", re.I), ATS.ORACLE_HCM),
+    (re.compile(r"careers\.ibm\.com", re.I), ATS.IBM),
 ]
 
 

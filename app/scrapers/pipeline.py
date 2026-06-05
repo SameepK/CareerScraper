@@ -10,7 +10,7 @@ from app.models.job import JobListing
 # ── Iframe embed patterns ──────────────────────────────────────────────────────
 _IFRAME_PATTERNS = [
     (re.compile(r'src="(https://jobs\.ashbyhq\.com/[^"?]+)', re.I),          ATS.ASHBY),
-    (re.compile(r'src="(https://boards\.greenhouse\.io/[^"?]+)', re.I),       ATS.GREENHOUSE),
+    (re.compile(r'src="(https://(?:job-boards|boards)\.greenhouse\.io/[^"?]+)', re.I), ATS.GREENHOUSE),
     (re.compile(r'src="(https://jobs\.lever\.co/[^"?]+)', re.I),              ATS.LEVER),
     (re.compile(r'src="(https://[^"]*myworkdayjobs\.com/[^"?]+)', re.I),      ATS.WORKDAY),
     (re.compile(r'src="(https://[^"]*avature\.net/[^"?]+)', re.I),            ATS.AVATURE),
@@ -21,8 +21,8 @@ _IFRAME_PATTERNS = [
 # Matches job-specific URLs (not just ATS homepages) so we don't false-positive
 # on marketing pages that mention ATS names in blog posts etc.
 _DIRECT_LINK_PATTERNS: list[tuple[re.Pattern, ATS]] = [
-    # Greenhouse  /company/jobs/12345
-    (re.compile(r'https://boards\.greenhouse\.io/[^/\s"\']+/jobs/\d+', re.I),       ATS.GREENHOUSE),
+    # Greenhouse  /company/jobs/12345  (both boards. and job-boards. subdomains)
+    (re.compile(r'https://(?:job-boards|boards)\.greenhouse\.io/[^/\s"\']+/jobs/\d+', re.I), ATS.GREENHOUSE),
     # Lever       /company/uuid
     (re.compile(r'https://jobs\.lever\.co/[^/\s"\']+/[a-f0-9-]{36}', re.I),        ATS.LEVER),
     # Ashby       /company/uuid
@@ -59,6 +59,7 @@ _MIN_DIRECT_LINKS = 3
 _SCROLL_ATS       = {ATS.ORACLE_HCM}
 _SPA_ATS          = {ATS.ASHBY, ATS.WORKDAY, ATS.ORACLE_HCM}
 _NO_AI_TARGET_ATS = {ATS.ORACLE_HCM}
+_PAGINATE_ATS     = {ATS.IBM}
 
 # Heading tags used for department / location grouping above job lists
 _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
@@ -224,6 +225,10 @@ async def _fetch_for_ats(url: str, ats: ATS) -> str:
         from app.scrapers.scroll_fetcher import fetch_all_jobs_html
         return await fetch_all_jobs_html(url)
 
+    if ats in _PAGINATE_ATS:
+        from app.scrapers.ibm_fetcher import fetch_all_pages_html
+        return await fetch_all_pages_html(url)
+
     return await fetch_html(
         url,
         ai_targeted=(ats not in _NO_AI_TARGET_ATS),
@@ -252,6 +257,17 @@ async def scrape(url: str) -> tuple[list[JobListing], ATS]:
             if direct:
                 return direct  # jobs already extracted, no need for a second fetch
 
+            # 3c: SPA / JS-rendered page — retry with browser to expose dynamic links
+            #     (e.g. Affirm: Next.js page that injects job-boards.greenhouse.io hrefs)
+            rendered_html = await fetch_html(careers_url, ai_targeted=False, browser=True)
+            embedded = _find_embedded_ats(rendered_html)
+            if embedded:
+                careers_url, ats = embedded
+            else:
+                direct = _extract_direct_links(rendered_html, careers_url)
+                if direct:
+                    return direct
+
     # Step 4: fetch the ATS board and parse it
     html = await _fetch_for_ats(careers_url, ats)
 
@@ -267,6 +283,8 @@ async def scrape(url: str) -> tuple[list[JobListing], ATS]:
         from app.parsers.avature import parse  # type: ignore[assignment]
     elif ats == ATS.ORACLE_HCM:
         from app.parsers.oracle_hcm import parse  # type: ignore[assignment]
+    elif ats == ATS.IBM:
+        from app.parsers.ibm import parse  # type: ignore[assignment]
     else:
         from app.parsers.generic import parse  # type: ignore[assignment]
 

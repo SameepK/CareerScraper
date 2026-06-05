@@ -1,5 +1,6 @@
 """TF-IDF resume ↔ job matcher with keyword explanation."""
 import re
+import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from app.models.job import JobListing
@@ -12,21 +13,76 @@ _STOP = frozenset(
     "i we you he she they it this that these those our your their".split()
 )
 
+# Boilerplate JD words that appear in almost every posting — no matching signal
+_JD_NOISE = frozenset([
+    "role", "team", "work", "experience", "ability", "strong", "including",
+    "across", "build", "building", "drive", "driving", "years", "looking",
+    "passionate", "excited", "opportunity", "skills", "required", "preferred",
+])
+
 _TOKEN_RE = re.compile(r"[a-z][a-z0-9+#./-]*")
+
+# Seniority keywords that warrant a penalty for junior candidates
+_SENIOR_RE = re.compile(
+    r"\b(senior|sr\.?|staff|principal|lead|director|vp|vice\s+president)\b", re.I
+)
+
+# Date range patterns: "Jan 2019 – Mar 2022", "2018 - 2021", "2020 – Present"
+_DATE_RANGE_RE = re.compile(
+    r"(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+)?"
+    r"((?:19|20)\d{2})"
+    r"\s*[-–—to]+\s*"
+    r"((?:19|20)\d{2}|present|current|now)",
+    re.I,
+)
+
+# Marker for the start of an education section
+_EDUCATION_RE = re.compile(
+    r"^\s*(education|academic|degree|university|college|school)\b",
+    re.I | re.MULTILINE,
+)
+
+_CURRENT_YEAR = 2025  # fixed reference year
 
 
 def _tokenize(text: str) -> list[str]:
-    return [t for t in _TOKEN_RE.findall(text.lower()) if t not in _STOP and len(t) > 2]
+    tokens = _TOKEN_RE.findall(text.lower())
+    return [t for t in tokens if t not in _STOP and t not in _JD_NOISE and len(t) > 2]
 
 
-def _keywords(text: str, n: int = 30) -> set[str]:
-    """Return the top-n TF-IDF terms from a single document."""
-    tokens = _tokenize(text)
-    if not tokens:
-        return set()
-    vec = TfidfVectorizer(analyzer=lambda t: t, max_features=n)
-    vec.fit([tokens])
-    return set(vec.get_feature_names_out())
+def _extract_years_of_experience(resume_text: str) -> float:
+    """
+    Parse explicit date ranges from the resume and return total years as a float.
+    Strips the education section first to avoid counting degree years.
+    """
+    edu_match = _EDUCATION_RE.search(resume_text)
+    work_text = resume_text[: edu_match.start()] if edu_match else resume_text
+
+    total = 0.0
+    for m in _DATE_RANGE_RE.finditer(work_text):
+        start = int(m.group(1))
+        end_raw = m.group(2).lower()
+        end = _CURRENT_YEAR if end_raw in ("present", "current", "now") else int(end_raw)
+        if end >= start:
+            total += end - start
+    return total
+
+
+def _seniority_penalty(job_title: str, resume_years: float) -> float:
+    """
+    Return a score multiplier in [0.0, 1.0].
+    Senior/Staff/Principal/Lead roles get 0.4 when the candidate has < 3 years.
+    """
+    if _SENIOR_RE.search(job_title) and resume_years < 3:
+        return 0.4
+    return 1.0
+
+
+def _top_terms(tfidf_row, feature_names: list[str], n: int = 30) -> set[str]:
+    """Return the top-n terms by TF-IDF weight from a sparse matrix row."""
+    row = tfidf_row.toarray().ravel()
+    top_indices = np.argpartition(row, -min(n, len(row)))[-n:]
+    return {feature_names[i] for i in top_indices if row[i] > 0}
 
 
 def _explain(matched: list[str], missing: list[str], score_pct: int) -> str:
@@ -50,6 +106,8 @@ def score_jobs(resume_text: str, jobs: list[JobListing]) -> list[MatchedJob]:
     if not jobs:
         return []
 
+    resume_years = _extract_years_of_experience(resume_text)
+
     resume_tokens = _tokenize(resume_text)
     corpus = [resume_tokens] + [_tokenize(f"{j.title} {j.description}") for j in jobs]
 
@@ -58,15 +116,18 @@ def score_jobs(resume_text: str, jobs: list[JobListing]) -> list[MatchedJob]:
     feature_names: list[str] = list(vec.get_feature_names_out())
 
     resume_vec = tfidf[0]
-    resume_kws = _keywords(resume_text, n=50)
+    # Keywords drawn from the corpus-fitted matrix so IDF is meaningful
+    resume_kws = _top_terms(resume_vec, feature_names, n=50)
 
     results: list[MatchedJob] = []
     for idx, job in enumerate(jobs):
         job_vec = tfidf[idx + 1]
         score: float = float(cosine_similarity(resume_vec, job_vec)[0][0])
-        score_pct = min(100, round(score * 200))  # cosine ≤0.5 in practice; scale to 100
 
-        job_kws = _keywords(f"{job.title} {job.description}", n=30)
+        penalty = _seniority_penalty(job.title, resume_years)
+        score_pct = min(100, round(score * 200 * penalty))  # cosine ≤0.5 in practice; scale to 100
+
+        job_kws = _top_terms(job_vec, feature_names, n=30)
         matched = sorted(resume_kws & job_kws)
         missing = sorted(job_kws - resume_kws)
 

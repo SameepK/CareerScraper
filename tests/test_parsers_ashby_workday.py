@@ -3,13 +3,17 @@ from app.parsers.workday import parse as wd_parse
 
 ASHBY_HTML = """
 <html><body>
-  <a href="/jobs/abc-123" data-testid="jobLink">
-    <h3>Frontend Engineer</h3>
-    <span class="location-label">Remote</span>
+  <a href="/acme/abc-123-uuid-0001">
+    <div class="ashby-job-posting-brief">
+      <h3 class="ashby-job-posting-brief-title">Frontend Engineer</h3>
+      <div class="ashby-job-posting-brief-details"><p>Engineering · Remote · Full-time</p></div>
+    </div>
   </a>
-  <a href="/jobs/def-456" data-testid="jobLink">
-    <h3>Backend Engineer</h3>
-    <span class="location-label">New York, NY</span>
+  <a href="/acme/def-456-uuid-0002">
+    <div class="ashby-job-posting-brief">
+      <h3 class="ashby-job-posting-brief-title">Backend Engineer</h3>
+      <div class="ashby-job-posting-brief-details"><p>Engineering · New York, NY · Full-time</p></div>
+    </div>
   </a>
 </body></html>
 """
@@ -35,7 +39,7 @@ def test_ashby_board():
     assert len(jobs) == 2
     assert jobs[0].title == "Frontend Engineer"
     assert jobs[0].location == "Remote"
-    assert "/jobs/abc-123" in jobs[0].url
+    assert "abc-123" in jobs[0].url
 
 
 def test_workday_board():
