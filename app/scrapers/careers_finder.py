@@ -47,9 +47,34 @@ _ATS_DOMAINS = re.compile(
 )
 
 
+def _normalize_url(url: str) -> str:
+    """Normalize URL by adding scheme if missing.
+    
+    Examples:
+        'example.com' → 'https://example.com'
+        'https://example.com' → 'https://example.com' (unchanged)
+        '//example.com' → 'https://example.com'
+    """
+    url = url.strip()
+    # Already has a scheme
+    if "://" in url:
+        return url
+    # Protocol-relative URL
+    if url.startswith("//"):
+        return f"https:{url}"
+    # No scheme — add https
+    return f"https://{url}"
+
+
 async def find_careers_url(url: str) -> str:
     """Return the best careers URL for the given company URL."""
+    # Normalize URL first
+    url = _normalize_url(url)
+    
     parsed = urlparse(url)
+    if not parsed.netloc:
+        raise ValueError(f"Invalid URL: {url}")
+    
     base = f"{parsed.scheme}://{parsed.netloc}"
 
     # Already pointing at an ATS board or a careers-looking path
@@ -58,48 +83,51 @@ async def find_careers_url(url: str) -> str:
         return url
 
     # Probe common paths with a lightweight HEAD/GET check
-    async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
-        for path in _COMMON_PATHS:
-            candidate = urljoin(base, path)
-            try:
-                resp = await client.head(candidate)
-                if resp.status_code < 400:
-                    logger.info("Found careers page via path probe: %s", candidate)
-                    return str(resp.url)  # follow any redirect
-            except Exception:
-                continue
-
-        # Fallback: fetch homepage and scan links
-        try:
-            resp = await client.get(base, timeout=15)
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(resp.text, "html.parser")
-            candidates: list[tuple[int, str]] = []
-
-            for a in soup.find_all("a", href=True):
-                href: str = a["href"]
-                text: str = a.get_text(strip=True)
-                combined = href + " " + text
-
-                if not _CAREERS_PATTERNS.search(combined):
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=10) as client:
+            for path in _COMMON_PATHS:
+                candidate = urljoin(base, path)
+                try:
+                    resp = await client.head(candidate)
+                    if resp.status_code < 400:
+                        logger.info("Found careers page via path probe: %s", candidate)
+                        return str(resp.url)  # follow any redirect
+                except Exception:
                     continue
 
-                # Resolve relative URLs
-                full = href if href.startswith("http") else urljoin(base, href)
-                # Score: prefer links that stay on the same domain
-                score = 2 if urlparse(full).netloc == parsed.netloc else 1
-                # Bonus for exact /careers or /jobs
-                if re.search(r"/(careers?|jobs?)/?$", full, re.I):
-                    score += 2
-                candidates.append((score, full))
+            # Fallback: fetch homepage and scan links
+            try:
+                resp = await client.get(base, timeout=15)
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(resp.text, "html.parser")
+                candidates: list[tuple[int, str]] = []
 
-            if candidates:
-                best = sorted(candidates, key=lambda x: -x[0])[0][1]
-                logger.info("Found careers page via homepage link scan: %s", best)
-                return best
-        except Exception as exc:
-            logger.warning("Homepage scan failed for %s: %s", base, exc)
+                for a in soup.find_all("a", href=True):
+                    href: str = a["href"]
+                    text: str = a.get_text(strip=True)
+                    combined = href + " " + text
 
-    # Nothing found — return original URL and let the pipeline try anyway
-    logger.warning("Could not find careers page for %s, using original URL", url)
-    return url
+                    if not _CAREERS_PATTERNS.search(combined):
+                        continue
+
+                    # Resolve relative URLs
+                    full = href if href.startswith("http") else urljoin(base, href)
+                    # Score: prefer links that stay on the same domain
+                    score = 2 if urlparse(full).netloc == parsed.netloc else 1
+                    # Bonus for exact /careers or /jobs
+                    if re.search(r"/(careers?|jobs?)/?$", full, re.I):
+                        score += 2
+                    candidates.append((score, full))
+
+                if candidates:
+                    best = sorted(candidates, key=lambda x: -x[0])[0][1]
+                    logger.info("Found careers page via homepage link scan: %s", best)
+                    return best
+            except Exception as exc:
+                logger.warning("Homepage scan failed for %s: %s", base, exc)
+    except Exception as exc:
+        logger.warning("Error fetching homepage for %s: %s", base, exc)
+
+    # Nothing found — return the normalized careers URL
+    logger.warning("Could not discover careers page for %s, using base URL", base)
+    return base

@@ -15,12 +15,35 @@ _STOP = frozenset(
 
 # Boilerplate JD words that appear in almost every posting — no matching signal
 _JD_NOISE = frozenset([
+    # Generic JD filler
     "role", "team", "work", "experience", "ability", "strong", "including",
     "across", "build", "building", "drive", "driving", "years", "looking",
     "passionate", "excited", "opportunity", "skills", "required", "preferred",
+    "join", "help", "use", "using", "used", "new", "great", "best", "high",
+    "well", "also", "make", "ensure", "contribute", "good", "key", "core",
+    "within", "following", "understand", "understanding", "knowledge", "ability",
+    "responsible", "responsibilities", "qualifications", "requirements",
+    "like", "love", "enjoy", "want", "care", "impact", "world", "people",
+    "company", "business", "product", "products", "customer", "customers",
+    "solutions", "solve", "problems", "problem", "challenges", "challenge",
+    "environment", "culture", "values", "mission", "vision", "growth",
+    "benefits", "equity", "salary", "compensation", "offer", "offering",
+    "apis", "api", "app", "apps", "deploy", "deployment", "scalable", "scale",
+    "collaborate", "collaboration", "cross", "functional", "ownership", "own",
+    "plus", "bonus", "nice", "have", "degree", "bs", "ms", "phd", "related",
+    "field", "equivalent", "practice",
+    # Job title words — never useful as skill keywords
+    "software", "engineer", "engineering", "developer", "development",
+    "manager", "management", "analyst", "associate", "specialist", "lead",
+    "senior", "junior", "staff", "principal", "director", "head", "vp",
+    "intern", "contract", "full", "time", "part", "remote", "hybrid",
+    "levels", "level", "all", "mid", "entry", "backend", "frontend",
+    "fullstack", "full-stack", "back-end", "front-end",
 ])
 
 _TOKEN_RE = re.compile(r"[a-z][a-z0-9+#./-]*")
+# Strip trailing punctuation that bleeds in from sentence ends (but keep c++, node.js)
+_TRAIL_PUNCT_RE = re.compile(r"[.,:;!?()\[\]]+$")
 
 # Seniority keywords that warrant a penalty for junior candidates
 _SENIOR_RE = re.compile(
@@ -47,7 +70,8 @@ _CURRENT_YEAR = 2025  # fixed reference year
 
 def _tokenize(text: str) -> list[str]:
     tokens = _TOKEN_RE.findall(text.lower())
-    return [t for t in tokens if t not in _STOP and t not in _JD_NOISE and len(t) > 2]
+    cleaned = [_TRAIL_PUNCT_RE.sub("", t) for t in tokens]
+    return [t for t in cleaned if t not in _STOP and t not in _JD_NOISE and len(t) > 2]
 
 
 def _extract_years_of_experience(resume_text: str) -> float:
@@ -109,7 +133,12 @@ def score_jobs(resume_text: str, jobs: list[JobListing]) -> list[MatchedJob]:
     resume_years = _extract_years_of_experience(resume_text)
 
     resume_tokens = _tokenize(resume_text)
-    corpus = [resume_tokens] + [_tokenize(f"{j.title} {j.description}") for j in jobs]
+    # Weight description 3× over title — title words (role names) carry little
+    # skill signal, while requirements/responsibilities sections carry most of it.
+    corpus = [resume_tokens] + [
+        _tokenize(j.title) + _tokenize(j.description) * 3
+        for j in jobs
+    ]
 
     vec = TfidfVectorizer(analyzer=lambda t: t)
     tfidf = vec.fit_transform(corpus)

@@ -959,6 +959,9 @@
         if (!res.ok) {
           let detail = `Server error ${res.status}`;
           try { const j = await res.json(); detail = j.detail || detail; } catch {}
+          if (detail.includes('fetch methods failed') || detail.includes('blocked') || detail.includes('WAF')) {
+            detail = `This site is blocking automated scrapers (bot protection / WAF). Try a direct ATS URL instead — e.g. boards.greenhouse.io/company or jobs.lever.co/company.`;
+          }
           throw new Error(detail);
         }
 

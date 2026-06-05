@@ -25,44 +25,65 @@ if not Path(_SCRAPLING).exists():
     _SCRAPLING = shutil.which("scrapling") or "scrapling"
 
 _MIN_CONTENT_LENGTH = 500  # bytes — below this we consider the fetch a failure
+_MAX_RETRIES = 3
+_RETRY_BACKOFF = 2  # exponential backoff multiplier
 
 
 async def _run_scrapling(command: str, url: str, ai_targeted: bool = True, extra_flags: list[str] | None = None) -> str:
-    """Run a scrapling extract <command> and return HTML string, or '' on failure."""
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
-        out_path = f.name
-
-    cmd = [_SCRAPLING, "extract", command, url, out_path]
-    if ai_targeted:
-        cmd.append("--ai-targeted")
-    cmd += extra_flags or []
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
-        if proc.returncode != 0:
-            logger.debug("scrapling %s stderr: %s", command, stderr.decode(errors="replace")[:300])
-
-        html = Path(out_path).read_text(encoding="utf-8", errors="replace")
-        if len(html) >= _MIN_CONTENT_LENGTH:
-            logger.info("scrapling extract %s succeeded for %s (%d bytes)", command, url, len(html))
-            return html
-        logger.warning("scrapling extract %s returned thin content (%d bytes) for %s", command, len(html), url)
-        return ""
-    except asyncio.TimeoutError:
-        logger.warning("scrapling extract %s timed out for %s", command, url)
-        return ""
-    except Exception as exc:
-        logger.warning("scrapling extract %s error for %s: %s", command, url, exc)
-        return ""
-    finally:
+    """Run a scrapling extract <command> with exponential backoff retry logic.
+    
+    Returns HTML string on success, or '' on failure after all retries exhausted.
+    """
+    last_error = None
+    
+    for attempt in range(_MAX_RETRIES):
         try:
-            os.unlink(out_path)
-        except OSError:
-            pass
+            with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+                out_path = f.name
+
+            cmd = [_SCRAPLING, "extract", command, url, out_path]
+            if ai_targeted:
+                cmd.append("--ai-targeted")
+            cmd += extra_flags or []
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+            if proc.returncode != 0:
+                logger.debug("scrapling %s stderr: %s", command, stderr.decode(errors="replace")[:300])
+                last_error = f"Process returned {proc.returncode}"
+                continue
+
+            html = Path(out_path).read_text(encoding="utf-8", errors="replace")
+            if len(html) >= _MIN_CONTENT_LENGTH:
+                logger.info("scrapling extract %s succeeded for %s (%d bytes)", command, url, len(html))
+                return html
+            logger.warning("scrapling extract %s returned thin content (%d bytes) for %s", command, len(html), url)
+            last_error = "Content too thin"
+            
+        except asyncio.TimeoutError:
+            logger.warning("scrapling extract %s timed out for %s (attempt %d/%d)", command, url, attempt + 1, _MAX_RETRIES)
+            last_error = "Timeout"
+        except Exception as exc:
+            logger.warning("scrapling extract %s error for %s (attempt %d/%d): %s", command, url, attempt + 1, _MAX_RETRIES, exc)
+            last_error = str(exc)
+        finally:
+            try:
+                os.unlink(out_path)
+            except OSError:
+                pass
+        
+        # Exponential backoff before retry
+        if attempt < _MAX_RETRIES - 1:
+            wait_time = (_RETRY_BACKOFF ** attempt)
+            logger.debug("Retrying after %d seconds...", wait_time)
+            await asyncio.sleep(wait_time)
+    
+    logger.warning("All scrapling extract %s attempts failed for %s. Last error: %s", command, url, last_error)
+    return ""
 
 
 async def fetch_html(
@@ -89,5 +110,14 @@ async def fetch_html(
         html = await _run_scrapling(command, url, ai_targeted=ai_targeted, extra_flags=flags)
         if html:
             return html
+
+    # If ai_targeted=True stripped all content, retry every command raw
+    if ai_targeted:
+        logger.info("ai_targeted pass failed for %s — retrying without --ai-targeted", url)
+        for command in commands:
+            flags = extra if command in ("fetch", "stealthy-fetch") else []
+            html = await _run_scrapling(command, url, ai_targeted=False, extra_flags=flags)
+            if html:
+                return html
 
     raise RuntimeError(f"All scrapling fetch methods failed for {url}")

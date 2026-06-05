@@ -1,5 +1,6 @@
 """Orchestrate careers discovery → fetch → detect → parse into JobListings."""
 import re
+from typing import Callable
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup, Tag
 from app.scrapers.fetcher import fetch_html
@@ -236,21 +237,61 @@ async def _fetch_for_ats(url: str, ats: ATS) -> str:
     )
 
 
+# ── Parser imports (moved to top to avoid dynamic import issues) ────────────────
+_PARSER_MAP: dict[ATS, Callable] = {}
+
+
+def _init_parsers() -> None:
+    """Initialize parser map on first use."""
+    if _PARSER_MAP:
+        return
+    
+    from app.parsers.greenhouse import parse as greenhouse_parse
+    from app.parsers.lever import parse as lever_parse
+    from app.parsers.ashby import parse as ashby_parse
+    from app.parsers.workday import parse as workday_parse
+    from app.parsers.avature import parse as avature_parse
+    from app.parsers.oracle_hcm import parse as oracle_parse
+    from app.parsers.ibm import parse as ibm_parse
+    from app.parsers.generic import parse as generic_parse
+    
+    _PARSER_MAP[ATS.GREENHOUSE] = greenhouse_parse
+    _PARSER_MAP[ATS.LEVER] = lever_parse
+    _PARSER_MAP[ATS.ASHBY] = ashby_parse
+    _PARSER_MAP[ATS.WORKDAY] = workday_parse
+    _PARSER_MAP[ATS.AVATURE] = avature_parse
+    _PARSER_MAP[ATS.ORACLE_HCM] = oracle_parse
+    _PARSER_MAP[ATS.IBM] = ibm_parse
+    _PARSER_MAP[ATS.GENERIC] = generic_parse
+
+
 async def scrape(url: str) -> tuple[list[JobListing], ATS]:
+    # Step 0: initialize parsers
+    _init_parsers()
+    
     # Step 1: resolve any company homepage to its actual careers page
-    careers_url = await find_careers_url(url)
+    try:
+        careers_url = await find_careers_url(url)
+    except ValueError as exc:
+        raise ValueError(f"Invalid input URL: {url} — {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Failed to discover careers page for {url}: {exc}") from exc
 
     # Step 2: detect ATS from URL
     ats = detect_ats(careers_url)
 
     # Step 3: for generic pages, inspect HTML for embedded / direct-linked ATS boards
+    # Keep the best HTML we fetched so we can reuse it in Step 4 without a second request.
+    _generic_html: str = ""
     if ats == ATS.GENERIC:
         raw_html = await fetch_html(careers_url, ai_targeted=False, browser=False)
+        _generic_html = raw_html
 
         # 3a: iframe embed (e.g. Credal → Ashby iframe)
         embedded = _find_embedded_ats(raw_html)
         if embedded:
             careers_url, ats = embedded
+            _generic_html = ""  # switched to a known ATS — fetch fresh in Step 4
         else:
             # 3b: direct ATS job links in the page HTML (e.g. Figma → 159 Greenhouse hrefs)
             direct = _extract_direct_links(raw_html, careers_url)
@@ -260,33 +301,33 @@ async def scrape(url: str) -> tuple[list[JobListing], ATS]:
             # 3c: SPA / JS-rendered page — retry with browser to expose dynamic links
             #     (e.g. Affirm: Next.js page that injects job-boards.greenhouse.io hrefs)
             rendered_html = await fetch_html(careers_url, ai_targeted=False, browser=True)
+            _generic_html = rendered_html  # browser render is richer — prefer it
             embedded = _find_embedded_ats(rendered_html)
             if embedded:
                 careers_url, ats = embedded
+                _generic_html = ""
             else:
                 direct = _extract_direct_links(rendered_html, careers_url)
                 if direct:
                     return direct
 
     # Step 4: fetch the ATS board and parse it
-    html = await _fetch_for_ats(careers_url, ats)
+    # For GENERIC pages we already have the HTML from Step 3 — reuse it to avoid
+    # a third request and to dodge ai_targeted stripping (e.g. Zoom).
+    html = _generic_html if (ats == ATS.GENERIC and _generic_html) else await _fetch_for_ats(careers_url, ats)
 
-    if ats == ATS.GREENHOUSE:
-        from app.parsers.greenhouse import parse
-    elif ats == ATS.LEVER:
-        from app.parsers.lever import parse
-    elif ats == ATS.ASHBY:
-        from app.parsers.ashby import parse  # type: ignore[assignment]
-    elif ats == ATS.WORKDAY:
-        from app.parsers.workday import parse  # type: ignore[assignment]
-    elif ats == ATS.AVATURE:
-        from app.parsers.avature import parse  # type: ignore[assignment]
-    elif ats == ATS.ORACLE_HCM:
-        from app.parsers.oracle_hcm import parse  # type: ignore[assignment]
-    elif ats == ATS.IBM:
-        from app.parsers.ibm import parse  # type: ignore[assignment]
-    else:
-        from app.parsers.generic import parse  # type: ignore[assignment]
-
-    jobs = parse(html, careers_url)
+    # Get the parser for this ATS type
+    parse_func = _PARSER_MAP.get(ats)
+    if not parse_func:
+        raise RuntimeError(f"No parser available for ATS: {ats}")
+    
+    jobs = parse_func(html, careers_url)
+    
+    # Validate that we extracted at least some jobs
+    if not jobs:
+        raise ValueError(
+            f"No jobs found on {careers_url} (ATS: {ats.value}). "
+            "The page structure may have changed or this may not be a job board."
+        )
+    
     return jobs, ats
