@@ -7,10 +7,15 @@ Strategy (per Scrapling agent skill docs):
 
 Each level is tried only if the previous returns empty or fails.
 --ai-targeted cleans hidden elements and extracts main content, reducing noise for parsers.
+
+Important: Custom career pages (React, Vue, Next.js) are detected via SPA indicators
+and automatically escalated to browser rendering. This ensures JavaScript-heavy sites
+are properly scraped even when initially detected as "generic" HTML.
 """
 import asyncio
 import logging
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -24,16 +29,56 @@ _SCRAPLING = str(_PROJECT_ROOT / ".venv" / "bin" / "scrapling")
 if not Path(_SCRAPLING).exists():
     _SCRAPLING = shutil.which("scrapling") or "scrapling"
 
-_MIN_CONTENT_LENGTH = 500  # bytes — below this we consider the fetch a failure
+# Content length thresholds
+_MIN_CONTENT_LENGTH = 500           # bytes — static HTML should have this minimum
+_MIN_CONTENT_LENGTH_SPA = 1500      # bytes — SPA/generic sites need more (job data fetched via XHR)
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2  # exponential backoff multiplier
 
+# SPA/JavaScript framework indicators (compiled once)
+_SPA_INDICATORS = re.compile(
+    r'id\s*=\s*["\'](?:root|app)["\']|'  # React root, Vue app
+    r'__NEXT_DATA__|__nuxt__|'              # Next.js, Nuxt markers
+    r'<script[^>]*type=["\']application/json|'  # Inline data
+    r'content=["\']application/ld\+json|'      # JSON-LD (injected by JS)
+    r'<noscript>.*?JavaScript|'                 # "Enable JS" message
+    r'document\.getElementById\(["\']',       # DOM manipulation
+    re.IGNORECASE | re.DOTALL
+)
 
-async def _run_scrapling(command: str, url: str, ai_targeted: bool = True, extra_flags: list[str] | None = None) -> str:
+
+def _is_spa_indicator_html(html: str) -> bool:
+    """Detect if HTML contains signs of SPA/client-side rendering.
+    
+    Returns True if the HTML suggests it's a React/Vue/Next.js app that needs
+    browser rendering to inject dynamic content (like job listings).
+    
+    Checks first 10KB only (performance optimization).
+    """
+    return bool(_SPA_INDICATORS.search(html[:10000]))
+
+
+async def _run_scrapling(
+    command: str,
+    url: str,
+    ai_targeted: bool = True,
+    extra_flags: list[str] | None = None,
+    min_content_length: int | None = None,
+) -> str:
     """Run a scrapling extract <command> with exponential backoff retry logic.
+    
+    Args:
+        command: The scrapling command (get, fetch, stealthy-fetch)
+        url: The URL to fetch
+        ai_targeted: Strip noise/hidden elements (default True)
+        extra_flags: Additional flags (--network-idle, etc.)
+        min_content_length: Minimum bytes to consider success (default _MIN_CONTENT_LENGTH)
     
     Returns HTML string on success, or '' on failure after all retries exhausted.
     """
+    if min_content_length is None:
+        min_content_length = _MIN_CONTENT_LENGTH
+    
     last_error = None
     
     for attempt in range(_MAX_RETRIES):
@@ -58,10 +103,11 @@ async def _run_scrapling(command: str, url: str, ai_targeted: bool = True, extra
                 continue
 
             html = Path(out_path).read_text(encoding="utf-8", errors="replace")
-            if len(html) >= _MIN_CONTENT_LENGTH:
+            if len(html) >= min_content_length:
                 logger.info("scrapling extract %s succeeded for %s (%d bytes)", command, url, len(html))
                 return html
-            logger.warning("scrapling extract %s returned thin content (%d bytes) for %s", command, len(html), url)
+            logger.warning("scrapling extract %s returned thin content (%d bytes, need %d) for %s",
+                          command, len(html), min_content_length, url)
             last_error = "Content too thin"
             
         except asyncio.TimeoutError:
@@ -91,32 +137,77 @@ async def fetch_html(
     ai_targeted: bool = True,
     browser: bool = False,
     network_idle: bool = False,
+    is_generic_site: bool = False,
 ) -> str:
     """Return HTML for *url*, escalating through get → fetch → stealthy-fetch.
 
+    Smart escalation strategy:
+    1. If browser=True, use browser rendering directly (skip get)
+    2. If browser=False but is_generic_site=True, try get first but detect SPA and escalate to browser
+    3. Otherwise, use standard escalation (get → fetch → stealthy-fetch)
+
     Args:
-        ai_targeted:  Strip noise/hidden elements for cleaner parsing (default True).
-                      Set False when you need raw HTML to detect embedded iframes.
-        browser:      Skip `get` and start directly with browser-based `fetch`.
-                      Use for JS-heavy SPAs (Ashby, Workday, Oracle HCM).
-        network_idle: Pass --network-idle to browser commands.
-                      Use for pages that fire many XHR requests to load job listings.
+        ai_targeted:    Strip noise/hidden elements for cleaner parsing (default True).
+                        Set False when you need raw HTML to detect embedded iframes.
+        browser:        Skip `get` and start directly with browser-based `fetch`.
+                        Use for JS-heavy SPAs (Ashby, Workday, Oracle HCM).
+        network_idle:   Pass --network-idle to browser commands.
+                        Use for pages that fire many XHR requests to load job listings.
+        is_generic_site: This is a custom careers page that might use React/Vue/Next.js.
+                        Use smarter SPA detection and lower content threshold.
     """
-    commands = ("fetch", "stealthy-fetch") if browser else ("get", "fetch", "stealthy-fetch")
+    
+    # Determine the content length threshold
+    min_content = _MIN_CONTENT_LENGTH_SPA if is_generic_site else _MIN_CONTENT_LENGTH
+    
+    # For known SPA systems, start with browser
+    if browser:
+        commands = ("fetch", "stealthy-fetch")
+    # For generic sites, try fast path but be smart about SPA detection
+    elif is_generic_site:
+        commands = ("get", "fetch", "stealthy-fetch")
+    # For everything else, standard escalation
+    else:
+        commands = ("get", "fetch", "stealthy-fetch")
+    
     extra: list[str] = ["--network-idle"] if network_idle else []
-    for command in commands:
+    
+    for i, command in enumerate(commands):
         # --network-idle only applies to browser commands
         flags = extra if command in ("fetch", "stealthy-fetch") else []
-        html = await _run_scrapling(command, url, ai_targeted=ai_targeted, extra_flags=flags)
+        
+        # Use lower threshold for initial attempts on SPA sites
+        attempt_min_content = min_content if (is_generic_site and command == "get") else _MIN_CONTENT_LENGTH
+        
+        html = await _run_scrapling(command, url, ai_targeted=ai_targeted, 
+                                   extra_flags=flags, min_content_length=attempt_min_content)
+        
         if html:
-            return html
+            # For generic sites with get command, check if it's a SPA that needs rendering
+            if is_generic_site and command == "get" and _is_spa_indicator_html(html):
+                logger.info("SPA framework detected in %s — escalating to browser rendering", url)
+                # Try browser rendering instead
+                browser_html = await _run_scrapling(
+                    "fetch", url,
+                    ai_targeted=ai_targeted,
+                    extra_flags=extra + ["--network-idle"],
+                    min_content_length=_MIN_CONTENT_LENGTH_SPA
+                )
+                if browser_html:
+                    return browser_html
+            
+            # If we got content that passes the threshold, return it
+            if len(html) >= min_content:
+                return html
 
     # If ai_targeted=True stripped all content, retry every command raw
     if ai_targeted:
         logger.info("ai_targeted pass failed for %s — retrying without --ai-targeted", url)
         for command in commands:
             flags = extra if command in ("fetch", "stealthy-fetch") else []
-            html = await _run_scrapling(command, url, ai_targeted=False, extra_flags=flags)
+            attempt_min_content = min_content if (is_generic_site and command == "get") else _MIN_CONTENT_LENGTH
+            html = await _run_scrapling(command, url, ai_targeted=False, extra_flags=flags,
+                                       min_content_length=attempt_min_content)
             if html:
                 return html
 

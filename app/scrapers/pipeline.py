@@ -221,7 +221,15 @@ def _extract_direct_links(html: str, page_url: str) -> tuple[list[JobListing], A
 
 
 async def _fetch_for_ats(url: str, ats: ATS) -> str:
-    """Fetch HTML using the right strategy for the given ATS."""
+    """Fetch HTML using the right strategy for the given ATS.
+    
+    Strategy:
+    - SCROLL_ATS (Oracle HCM): Use scroll_fetcher to load infinite scroll jobs
+    - PAGINATE_ATS (IBM): Use ibm_fetcher to handle pagination
+    - SPA_ATS (Ashby, Workday, Oracle): Use browser rendering directly
+    - GENERIC sites: Use smart SPA detection + browser fallback
+    - Everything else: Standard escalation with ai_targeted optimization
+    """
     if ats in _SCROLL_ATS:
         from app.scrapers.scroll_fetcher import fetch_all_jobs_html
         return await fetch_all_jobs_html(url)
@@ -230,10 +238,31 @@ async def _fetch_for_ats(url: str, ats: ATS) -> str:
         from app.scrapers.ibm_fetcher import fetch_all_pages_html
         return await fetch_all_pages_html(url)
 
+    # For GENERIC sites: use smart detection + always enable network_idle
+    # (many custom sites fetch job data via XHR after page load)
+    if ats == ATS.GENERIC:
+        return await fetch_html(
+            url,
+            ai_targeted=False,  # Keep raw HTML for better SPA detection
+            browser=False,      # Start with get, but smart-escalate to fetch if SPA detected
+            network_idle=True,  # Wait for XHR job requests to complete
+            is_generic_site=True,  # Enable SPA detection + higher content threshold
+        )
+
+    # For known SPA systems
+    if ats in _SPA_ATS:
+        return await fetch_html(
+            url,
+            ai_targeted=(ats not in _NO_AI_TARGET_ATS),
+            browser=True,       # Start directly with browser rendering
+            network_idle=True,  # Wait for XHR job requests
+        )
+
+    # For everything else (Greenhouse, Lever, Avature, etc.)
     return await fetch_html(
         url,
-        ai_targeted=(ats not in _NO_AI_TARGET_ATS),
-        browser=(ats in _SPA_ATS),
+        ai_targeted=True,
+        browser=False,
     )
 
 
@@ -284,7 +313,13 @@ async def scrape(url: str) -> tuple[list[JobListing], ATS]:
     # Keep the best HTML we fetched so we can reuse it in Step 4 without a second request.
     _generic_html: str = ""
     if ats == ATS.GENERIC:
-        raw_html = await fetch_html(careers_url, ai_targeted=False, browser=False)
+        # Use smart SPA detection + higher content threshold for initial fetch
+        raw_html = await fetch_html(
+            careers_url,
+            ai_targeted=False,
+            browser=False,
+            is_generic_site=True,  # Enable SPA detection + network_idle
+        )
         _generic_html = raw_html
 
         # 3a: iframe embed (e.g. Credal → Ashby iframe)
@@ -300,7 +335,12 @@ async def scrape(url: str) -> tuple[list[JobListing], ATS]:
 
             # 3c: SPA / JS-rendered page — retry with browser to expose dynamic links
             #     (e.g. Affirm: Next.js page that injects job-boards.greenhouse.io hrefs)
-            rendered_html = await fetch_html(careers_url, ai_targeted=False, browser=True)
+            rendered_html = await fetch_html(
+                careers_url,
+                ai_targeted=False,
+                browser=True,
+                network_idle=True,  # Wait for XHR job requests
+            )
             _generic_html = rendered_html  # browser render is richer — prefer it
             embedded = _find_embedded_ats(rendered_html)
             if embedded:
@@ -325,6 +365,21 @@ async def scrape(url: str) -> tuple[list[JobListing], ATS]:
     
     # Validate that we extracted at least some jobs
     if not jobs:
+        # More detailed error message for GENERIC sites
+        if ats == ATS.GENERIC:
+            logger.error(
+                "No jobs found on %s (GENERIC site, fetched %d bytes). "
+                "The page might use an unrecognized job board, custom data structure, "
+                "or dynamic loading. Consider: 1) Check site manually, 2) Check parser logs, "
+                "3) Open issue with example URL.",
+                careers_url, len(html)
+            )
+        else:
+            logger.error(
+                "No jobs found on %s (ATS: %s, fetched %d bytes). "
+                "The site structure may have changed or this may not be a job board.",
+                careers_url, ats.value, len(html)
+            )
         raise ValueError(
             f"No jobs found on {careers_url} (ATS: {ats.value}). "
             "The page structure may have changed or this may not be a job board."
