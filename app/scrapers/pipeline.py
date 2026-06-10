@@ -1,9 +1,12 @@
 """Orchestrate careers discovery → fetch → detect → parse into JobListings."""
+import logging
 import re
 from typing import Callable
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup, Tag
 from app.scrapers.fetcher import fetch_html
+
+logger = logging.getLogger(__name__)
 from app.scrapers.careers_finder import find_careers_url
 from app.scrapers.ats_detector import detect_ats, ATS
 from app.models.job import JobListing
@@ -59,7 +62,7 @@ _MIN_DIRECT_LINKS = 3
 # ── Fetch strategies ───────────────────────────────────────────────────────────
 _SCROLL_ATS       = {ATS.ORACLE_HCM}
 _SPA_ATS          = {ATS.ASHBY, ATS.WORKDAY, ATS.ORACLE_HCM}
-_NO_AI_TARGET_ATS = {ATS.ORACLE_HCM}
+_NO_AI_TARGET_ATS = {ATS.ORACLE_HCM, ATS.LEVER, ATS.GENERIC}
 _PAGINATE_ATS     = {ATS.IBM}
 
 # Heading tags used for department / location grouping above job lists
@@ -271,27 +274,12 @@ _PARSER_MAP: dict[ATS, Callable] = {}
 
 
 def _init_parsers() -> None:
-    """Initialize parser map on first use."""
+    """All ATS types use the universal parser — only fetch strategies differ."""
     if _PARSER_MAP:
         return
-    
-    from app.parsers.greenhouse import parse as greenhouse_parse
-    from app.parsers.lever import parse as lever_parse
-    from app.parsers.ashby import parse as ashby_parse
-    from app.parsers.workday import parse as workday_parse
-    from app.parsers.avature import parse as avature_parse
-    from app.parsers.oracle_hcm import parse as oracle_parse
-    from app.parsers.ibm import parse as ibm_parse
-    from app.parsers.generic import parse as generic_parse
-    
-    _PARSER_MAP[ATS.GREENHOUSE] = greenhouse_parse
-    _PARSER_MAP[ATS.LEVER] = lever_parse
-    _PARSER_MAP[ATS.ASHBY] = ashby_parse
-    _PARSER_MAP[ATS.WORKDAY] = workday_parse
-    _PARSER_MAP[ATS.AVATURE] = avature_parse
-    _PARSER_MAP[ATS.ORACLE_HCM] = oracle_parse
-    _PARSER_MAP[ATS.IBM] = ibm_parse
-    _PARSER_MAP[ATS.GENERIC] = generic_parse
+    from app.parsers.universal import parse as universal_parse
+    for ats in ATS:
+        _PARSER_MAP[ats] = universal_parse
 
 
 async def scrape(url: str) -> tuple[list[JobListing], ATS]:

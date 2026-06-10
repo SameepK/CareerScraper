@@ -30,8 +30,8 @@ if not Path(_SCRAPLING).exists():
     _SCRAPLING = shutil.which("scrapling") or "scrapling"
 
 # Content length thresholds
-_MIN_CONTENT_LENGTH = 500           # bytes — static HTML should have this minimum
-_MIN_CONTENT_LENGTH_SPA = 1500      # bytes — SPA/generic sites need more (job data fetched via XHR)
+_MIN_CONTENT_LENGTH = 2000          # bytes — error/shell pages are usually <1kb; real pages are larger
+_MIN_CONTENT_LENGTH_SPA = 3000      # bytes — SPA/generic sites need more (job data fetched via XHR)
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = 2  # exponential backoff multiplier
 
