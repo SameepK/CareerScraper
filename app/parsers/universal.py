@@ -119,6 +119,25 @@ def _extract_title(card: Tag, anchor: Tag) -> str:
     return ""
 
 
+def _location_from_text(text: str) -> str:
+    """
+    Extract just the location from a bullet/dot-separated details string.
+    e.g. "Data Science • San Francisco • Full time" → "San Francisco"
+    If no separators, return the whole text if it looks like a location.
+    """
+    for sep in ("•", "·", "|", "/"):
+        if sep in text:
+            for segment in text.split(sep):
+                s = segment.strip()
+                if _LOCATION_TEXT_RE.search(s) and len(s) < 60:
+                    return s
+            return ""  # has separators but no location segment found
+    # No separators — return if it looks like a location
+    if _LOCATION_TEXT_RE.search(text) and len(text) < 60:
+        return text
+    return ""
+
+
 def _extract_location(card: Tag) -> str:
     """Extract a location string from a job card."""
     # 1. Element whose class/id name contains location-related keywords
@@ -128,24 +147,34 @@ def _extract_location(card: Tag) -> str:
         )
     )
     if loc_el:
-        return loc_el.get_text(strip=True)
+        return _location_from_text(loc_el.get_text(strip=True))
 
     # 2. Any text node that looks like a location
     for el in card.find_all(["span", "p", "div", "li"], recursive=True):
         t = el.get_text(strip=True)
-        if t and _LOCATION_TEXT_RE.search(t) and len(t) < 80:
-            return t
+        if t and len(t) < 120:
+            loc = _location_from_text(t)
+            if loc:
+                return loc
 
     return ""
 
 
 def _find_card(anchor: Tag) -> Tag:
     """
-    Walk up the DOM from the anchor to find the smallest container that
-    holds meaningful context (title text beyond the anchor itself).
-    Stops at the first container that has either a heading OR at least one
-    sibling element with text (covers <p>-based layouts like Aurora).
+    Find the smallest container that represents a single job card.
+
+    Priority:
+    1. If the anchor itself contains a heading, it IS the card (e.g. Ashby —
+       each <a> wraps the entire posting including <h3>). Using the parent
+       would span ALL jobs in the list and cause duplicates.
+    2. Walk up to the first parent that has a heading OR a sibling element
+       with text (covers <p>-based layouts like Aurora).
     """
+    # Case 1: anchor wraps its own heading — use it directly
+    if anchor.find(["h1", "h2", "h3", "h4"]):
+        return anchor
+
     _STOP_TAGS = {"body", "main", "section", "article", "ul", "ol", "table",
                   "tbody", "thead", "html"}
     node = anchor.parent
